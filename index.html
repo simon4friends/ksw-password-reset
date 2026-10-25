@@ -18,7 +18,7 @@
     input:focus { outline: 3px solid #b8e5d1; border-color: #08784e; }
     button { width: 100%; margin-top: 20px; padding: 14px; border: 0; border-radius: 11px; background: #08784e; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .65; cursor: wait; }
-    #form[hidden] { display: none; }
+    form[hidden] { display: none; }
     .hint { margin-top: 16px; font-size: 13px; color: #687872; line-height: 1.5; }
   </style>
 </head>
@@ -28,14 +28,19 @@
     <h1>Reset your password</h1>
     <p class="sub">KSW Kampot Ordering</p>
     <p id="status" role="status" aria-live="polite">Checking your secure reset link…</p>
-    <form id="form" hidden>
+    <form id="request-form" hidden>
+      <label for="email">Email address</label>
+      <input id="email" type="email" autocomplete="email" required>
+      <button id="request-button" type="submit">Send a reset email</button>
+    </form>
+    <form id="reset-form" hidden>
       <label for="pw">New password</label>
       <input id="pw" type="password" minlength="8" autocomplete="new-password" required>
       <label for="pw2">Confirm new password</label>
       <input id="pw2" type="password" minlength="8" autocomplete="new-password" required>
       <button id="save" type="submit">Save new password</button>
     </form>
-    <p class="hint">Use at least 8 characters. If your link has expired, request a new password-reset email and open the newest link.</p>
+    <p class="hint">Use at least 8 characters. For your security, only the newest valid reset link can be used.</p>
   </main>
   <script type="module">
     import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -45,13 +50,16 @@
       { auth: { detectSessionInUrl: false, persistSession: true, autoRefreshToken: true } }
     );
     const status = document.getElementById("status");
-    const form = document.getElementById("form");
+    const requestForm = document.getElementById("request-form");
+    const resetForm = document.getElementById("reset-form");
     const cleanUrl = () => history.replaceState(null, document.title, location.pathname);
     try {
       const url = new URL(location.href);
       const hash = new URLSearchParams(url.hash.slice(1));
       const tokenHash = url.searchParams.get("token_hash");
       const type = url.searchParams.get("type") || hash.get("type");
+      const authError = url.searchParams.get("error_description") || hash.get("error_description");
+      if (authError) throw new Error(authError.replace(/\+/g, " "));
       if (tokenHash && type === "recovery") {
         const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: "recovery" });
         if (error) throw error;
@@ -64,14 +72,37 @@
         if (error) throw error;
         cleanUrl();
       } else {
-        throw new Error("This link does not contain a valid password-reset session. Please request a fresh reset email and open its newest link.");
+        status.textContent = "To get a fresh secure link, enter your account email below.";
+        requestForm.hidden = false;
       }
-      status.textContent = "Your link is verified. Choose a new password below.";
-      form.hidden = false;
+      if (!requestForm.hidden) {
+        // A request form is intentionally shown only when this page has no recovery token.
+      } else {
+        status.textContent = "Your link is verified. Choose a new password below.";
+        resetForm.hidden = false;
+      }
     } catch (err) {
-      status.textContent = err?.message || "We couldn't verify this reset link. Please request a fresh reset email.";
+      status.textContent = (err?.message || "We couldn't verify this reset link.") + " You can request a fresh email below.";
+      requestForm.hidden = false;
     }
-    form.addEventListener("submit", async (event) => {
+    requestForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = document.getElementById("request-button");
+      button.disabled = true;
+      button.textContent = "Sending…";
+      const email = document.getElementById("email").value.trim();
+      const redirectTo = location.origin + location.pathname;
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+      if (error) {
+        status.textContent = "We couldn't send the reset email: " + error.message;
+        button.disabled = false;
+        button.textContent = "Send a reset email";
+        return;
+      }
+      status.textContent = "If an account exists for that address, a reset email has been sent. Open the newest email and tap its reset link in Safari.";
+      requestForm.hidden = true;
+    });
+    resetForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const password = document.getElementById("pw").value;
       const confirmation = document.getElementById("pw2").value;
@@ -82,13 +113,13 @@
       button.textContent = "Saving…";
       const { error } = await supabase.auth.updateUser({ password });
       if (error) {
-        status.textContent = error.message;
+        status.textContent = "Password update failed: " + error.message;
         button.disabled = false;
         button.textContent = "Save new password";
         return;
       }
-      form.hidden = true;
-      status.textContent = "Password updated successfully. You can now return to KSW Kampot Ordering and sign in with your new password.";
+      resetForm.hidden = true;
+      status.textContent = "Password updated successfully. You can now sign in with your new password.";
     });
   </script>
 </body>
